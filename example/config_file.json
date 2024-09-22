@@ -1,0 +1,17 @@
+{
+    "data_load":{
+        "rxn_file" : "pao1-rxnx.tsv",
+        "cpd_file" : "pao1-cpds.tsv",
+        "model_file": "pao1-gsm.tsv",
+        "expr_file" : "pao1-proteins01.tsv",
+        "tn_seq_file" : "pao1-tnseq.txt",
+        "media_file" : "scfm2.txt"
+    },
+    "data_analysis":{
+        "export_sbml"  : "False",
+        "ko_fba" : "False",
+        "epr_to_flux" : "True",
+        "custom_obj" : "True",
+        "predict_expr" : "True"
+    }
+}

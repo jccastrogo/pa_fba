@@ -2,7 +2,7 @@
 '''
 @name pseudomonas_flux.py
 @author: Juan C. Castro <jcb0@cdc.gov>
-@version: 1.2
+@version: 1.2.0
 @update: 24-Jun-2024
 @license: GNU General Public License v3.0
 '''
@@ -58,14 +58,31 @@ def create_sbml_model(reaction_file, compounds_file, output_file):
 
     # Create a cobra.Model object
     model = cobra.Model()
-
-    # Add reactions and compounds to the model (customize this part based on your data)
-    # Example: model.add_reaction(reaction)
-    #          model.add_metabolite(compound)
-
-    # Set objective function (if applicable)
-    # Example: model.objective = 'Biomass_Ecoli_core'
-
+    
+    # Load reactions and compounds from CSV files
+    reactions_df = pd.read_csv('reactions.csv')
+    compounds_df = pd.read_csv('compounds.csv')
+    
+    # Add metabolites to the model
+    for index, row in compounds_df.iterrows():
+        metabolite = cobra.Metabolite(
+            id=row['id'],
+            name=row['name'],
+            compartment=row['compartment']
+        )
+        model.add_metabolites([metabolite])     
+    # Add reactions to the model
+    for index, row in reactions_df.iterrows():
+        reaction = cobra.Reaction(id=row['id'])
+        reaction.name = row['name']
+        reaction.lower_bound = row['lower_bound']
+        reaction.upper_bound = row['upper_bound']
+        # Add metabolites to the reaction
+        metabolites = {}
+        for met_id, stoich in zip(row['metabolites'].split(';'), row['stoichiometry'].split(';')):
+            metabolites[model.metabolites.get_by_id(met_id)] = float(stoich)
+        reaction.add_metabolites(metabolites)
+        model.add_reactions([reaction])
     # Save the model to SBML format
     cobra.io.write_sbml_model(model, output_file)
 
@@ -325,7 +342,3 @@ if __name__ == "__main__":
 
     tn_seq_opt = create_custom_objective(mm_file, expression_file)
     custom_fba(mm_file, tn_seq_opt)
-
-
-
-
