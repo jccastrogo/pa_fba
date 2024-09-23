@@ -14,6 +14,7 @@ try :
     import argparse
     import json
     import numpy as np
+    import pandas as pd
     import cobra
     from cobra.flux_analysis import mapExpressionToReactions
     import matplotlib.pyplot as plt
@@ -41,7 +42,7 @@ def parseConfigFile(config_file:str):
     config_IOS.close()
     return(config_dict)
 
-def create_sbml_model(reaction_file, compounds_file, output_file):
+def create_sbml_model(reaction_file, compounds_file, output_file, save_to_file):
     """
     Creates an SBML metabolic model from reaction and compounds files.
 
@@ -60,8 +61,8 @@ def create_sbml_model(reaction_file, compounds_file, output_file):
     model = cobra.Model()
     
     # Load reactions and compounds from CSV files
-    reactions_df = pd.read_csv('reactions.csv')
-    compounds_df = pd.read_csv('compounds.csv')
+    reactions_df = pd.read_csv(reaction_file)
+    compounds_df = pd.read_csv(compounds_file)
     
     # Add metabolites to the model
     for index, row in compounds_df.iterrows():
@@ -84,7 +85,9 @@ def create_sbml_model(reaction_file, compounds_file, output_file):
         reaction.add_metabolites(metabolites)
         model.add_reactions([reaction])
     # Save the model to SBML format
-    cobra.io.write_sbml_model(model, output_file)
+    if save_to_file:
+        cobra.io.write_sbml_model(model, output_file)    
+    return(model)
 
 def custom_fba(model, objective_coefficients):
     """
@@ -326,19 +329,47 @@ def plot_observed_vs_predicted(observed_expression, predicted_expression):
     plt.show()
 
 if __name__ == "__main__":
+    #Parse arguments
     args = parser.parse_args()
+    #Parse config file
     config_file = args.config_file
     config_dict = parseConfigFile(config_file)
+    #Data options
     data_opts = config_dict['data_load']
-    mm_file = data_opts['metabolic_model']
+    rxn_file = data_opts["rxn_file"]
+    cpd_file = data_opts["cpd_file"]
+    model_file = data_opts["model_file"]
+    expr_file = data_opts["expr_file"]
+    tn_seq_file = data_opts["tn_seq_file"]
     media_file = data_opts['media_file']
-    expression_file = data_opts['expression_file']
-
-    knockout_and_fba(mm_file, gene_ids)
+    #Analysis options
+    analysis_opts = config_dict["data_analysis"]
+    export_sbml = analysis_opts["export_sbml"]
+    ko_fba = analysis_opts["ko_fba"]
+    epr_to_flux = analysis_opts["epr_to_flux"]
+    custom_obj = analysis_opts["custom_obj"]
+    predict_expr = analysis_opts["predict_expr"]
+    #Output options
+    output_opts = config_dict["data_analysis"]
+    output_prefix = output_opts["output_prefix"]
+        
+    if export_sbml:
+        output_file = f'{output_prefix}gsm.sbml'
+        save_to_file = True
+        model = create_sbml_model(rxn_file, cpd_file, output_file, save_to_file)
+    else:
+        save_to_file = False
+        output_file = f'{output_prefix}gsm.sbml'
+        model = create_sbml_model(rxn_file, cpd_file, output_file, save_to_file)
     
-    media_fluxes = fba_with_media(mm_file, media_file)
-    expression_values = read_gene_expression_file(expression_file)
-    relate_expression_to_fluxes(mm_file, expression_values)
+    if json.loads(ko_fba.lower()):
+        gene_ids = pd.read_csv(tn_seq_file)
+        knockout_and_fba(model, gene_ids)
+            
+    media_fluxes = fba_with_media(model, media_file)
+    expression_values = read_gene_expression_file(expr_file)
+    relate_expression_to_fluxes(model, expression_values)
 
-    tn_seq_opt = create_custom_objective(mm_file, expression_file)
-    custom_fba(mm_file, tn_seq_opt)
+    tn_seq_opt = create_custom_objective(model, expr_file)
+    gene_ids = pd.read_csv(tn_seq_file)
+    custom_fba(model, gene_ids)

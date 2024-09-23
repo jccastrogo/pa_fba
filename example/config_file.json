@@ -13,5 +13,8 @@
         "epr_to_flux" : "True",
         "custom_obj" : "True",
         "predict_expr" : "True"
+    },
+    "output":{
+        "output_prefix" : "output_"
     }
 }
