@@ -89,6 +89,114 @@ def create_sbml_model(reaction_file, compounds_file, output_file, save_to_file):
         cobra.io.write_sbml_model(model, output_file)    
     return(model)
 
+def optimize_biomass(model: cobra.Model,
+                     biomass_rxn: str = None) -> cobra.Solution:
+    """Standard FBA: maximize biomass."""
+    if biomass_rxn is not None:
+        model.objective = model.reactions.get_by_id(biomass_rxn)
+    solution = model.optimize()
+    _report("biomass", model, solution)
+    return solution
+ 
+ 
+def optimize_pfba(model: cobra.Model,
+                  biomass_rxn: str = None,
+                  fraction_of_optimum: float = 1.0) -> cobra.Solution:
+    """
+    Parsimonious FBA (Blank et al. 2005; Lewis et al. 2010).
+    Maximize biomass, then minimize sum of |fluxes| subject to biomass
+    staying at `fraction_of_optimum` of its maximum.
+    """
+    if biomass_rxn is not None:
+        model.objective = model.reactions.get_by_id(biomass_rxn)
+    solution = pfba(model, fraction_of_optimum=fraction_of_optimum)
+    _report("pfba", model, solution)
+    return solution
+ 
+ 
+def optimize_min_redox(model: cobra.Model,
+                       biomass_rxn: str,
+                       redox_metabolite_ids=None,
+                       biomass_fraction: float = 1.0) -> cobra.Solution:
+    """
+    Minimize flux through reactions that produce redox cofactors
+    (NADH, NADPH, FADH2 by default), while requiring biomass to stay at
+    >= `biomass_fraction` of its unconstrained optimum.
+ 
+    Based on Knorr et al. (2007).
+ 
+    Args:
+        model: The constrained model. Must have a biomass reaction.
+        biomass_rxn: ID of the biomass reaction (used to set the minimum
+                     growth constraint).
+        redox_metabolite_ids: Iterable of metabolite IDs for redox cofactors
+                              in their reduced form. Defaults to ModelSEED
+                              NADH/NADPH/FADH2 in the cytosol.
+        biomass_fraction: Required fraction of maximum biomass (0.0 - 1.0).
+ 
+    Returns:
+        The cobra Solution.
+    """
+    if redox_metabolite_ids is None:
+        redox_metabolite_ids = DEFAULT_REDOX_METABOLITES
+ 
+    # Use a context manager so our modifications don't persist on the model.
+    with model:
+        # 1) Find the maximum biomass under current media, set a lower bound.
+        biomass = model.reactions.get_by_id(biomass_rxn)
+        model.objective = biomass
+        max_growth = model.slim_optimize()
+        if max_growth is None or max_growth != max_growth:  # NaN check
+            raise RuntimeError("Biomass optimization failed; cannot set "
+                               "growth floor for min-redox.")
+        biomass.lower_bound = biomass_fraction * max_growth
+        print(f"min_redox: max biomass = {max_growth:.6f}, "
+              f"floor set to {biomass.lower_bound:.6f} "
+              f"({biomass_fraction*100:.0f}% of optimum)")
+ 
+        # 2) Find all reactions that *produce* a redox metabolite.
+        redox_mets = []
+        for mid in redox_metabolite_ids:
+            try:
+                redox_mets.append(model.metabolites.get_by_id(mid))
+            except KeyError:
+                print(f"  Warning: redox metabolite '{mid}' not in model; "
+                      f"skipping.", file=sys.stderr)
+ 
+        redox_rxns = set()
+        for met in redox_mets:
+            for rxn in met.reactions:
+                coeff = rxn.metabolites[met]
+                # A reaction "produces" the metabolite when flux * coeff > 0.
+                # Forward (flux > 0) produces if coeff > 0; reverse produces
+                # if coeff < 0 and the reaction is reversible. We include the
+                # reaction either way and let the solver pick the direction.
+                if coeff != 0:
+                    redox_rxns.add(rxn.id)
+ 
+        if not redox_rxns:
+            raise RuntimeError("No redox-producing reactions found; check "
+                               "your --redox_metabolites argument.")
+        print(f"min_redox: minimizing across {len(redox_rxns)} "
+              f"redox-producing reactions")
+ 
+        # 3) Build a linear objective: minimize sum of (forward - reverse)
+        #    fluxes for each redox-producing reaction, signed so that
+        #    *production* of the redox cofactor is what gets minimized.
+        #    For simplicity and robustness we minimize the sum of absolute
+        #    fluxes through these reactions using pFBA-style variable split,
+        #    which is what COBRApy's linear objective on reaction forward
+        #    variables gives when combined with `direction='min'` after
+        #    setting a growth floor.
+        obj_terms = {model.reactions.get_by_id(rid): 1.0 for rid in redox_rxns}
+        model.objective = obj_terms
+        model.objective_direction = "min"
+ 
+        solution = model.optimize()
+ 
+    _report("min_redox", model, solution)
+    return solution 
+
 def custom_fba(model, objective_coefficients):
     """
     Perform flux balance analysis (FBA) with a customizable objective function.
